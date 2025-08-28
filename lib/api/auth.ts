@@ -15,7 +15,7 @@ interface SignupPayload {
 }
 
 export async function login(email: string, password: string) {
-  const data = await apiFetch<LoginResponse>("/auth/login", {
+  const data = await apiFetch<LoginResponse>("/cognito/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
     skipAuth: true,
@@ -36,7 +36,7 @@ export async function adminLogin(email: string, password: string) {
 
 export async function signup(payload: SignupPayload) {
   // Tu API devuelve 201 con el usuario creado (RetrieveUserBase)
-  return apiFetch<unknown>("/auth/signup", {
+  return apiFetch<unknown>("/cognito/auth/signup", {
     method: "POST",
     body: JSON.stringify(payload),
     skipAuth: true,

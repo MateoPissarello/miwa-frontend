@@ -5,27 +5,51 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { signup } from "@/lib/api/auth";
+import { ApiError } from "@/lib/api/client";
+import { uploadPictureForSignup } from "@/lib/api/s3"; // <-- NUEVO
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { signup } from "@/lib/api/auth";
-import { ApiError } from "@/lib/api/client";
+function normalizePhoneE164(raw: string) {
+  const s = raw.trim();
+  if (s.startsWith("+")) return s;
+  if (/^\d+$/.test(s)) return `+${s}`;
+  return s;
+}
 
 interface Props {
   title?: string;
-  onSuccessRedirect?: string; // ej: "/login"
+  onSuccessRedirect?: string; // default: "/signup/verify-email"
 }
 
 export default function SignupForm({
   title = "Create your account",
-  onSuccessRedirect = "/login",
+  onSuccessRedirect = "/signup/verify-email",
 }: Props) {
   const router = useRouter();
 
-  const [nombre, setNombre] = useState("");
-  const [apellido, setApellido] = useState("");
-  const [correo, setCorreo] = useState("");
-  const [contrasena, setContrasena] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [nickname, setNickname] = useState("");
+  const [address, setAddress] = useState("");
+  const [birthdate, setBirthdate] = useState("");
+  const [gender, setGender] = useState<string>("");
+
+  const [phoneNumber, setPhoneNumber] = useState("");
+  const [familyName, setFamilyName] = useState("");
+  const [name, setName] = useState("");
+
+  const [pictureFile, setPictureFile] = useState<File | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<null | {
     type: "ok" | "error";
@@ -35,43 +59,91 @@ export default function SignupForm({
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setMessage(null);
-    setLoading(true);
 
+    const emailTrim = email.trim();
+    const passwordTrim = password.trim();
+
+    if (!emailTrim || !passwordTrim)
+      return setMessage({
+        type: "error",
+        text: "Email y contraseña son obligatorios.",
+      });
+    if (passwordTrim.length < 8)
+      return setMessage({
+        type: "error",
+        text: "La contraseña debe tener al menos 8 caracteres.",
+      });
+    if (!birthdate)
+      return setMessage({
+        type: "error",
+        text: "La fecha de nacimiento es obligatoria.",
+      });
+    if (!gender)
+      return setMessage({ type: "error", text: "Selecciona un género." });
+
+    setLoading(true);
     try {
-      await signup({
-        // Ajusta los nombres si tu CreateUserBase usa otros campos
-        first_name: nombre,
-        last_name: apellido,
-        email: correo,
-        password: contrasena,
+      // 1) Subir foto (opcional) usando /s3/presign-setup (lib/api/s3)
+      let pictureUrl: string | undefined;
+      if (pictureFile) {
+        const { url } = await uploadPictureForSignup(emailTrim, pictureFile);
+        pictureUrl = url;
+      }
+
+      // 2) Hacer signup con todos los atributos
+      const payload = {
+        email: emailTrim,
+        password: passwordTrim,
+        nickname: nickname.trim(),
+        address: address.trim(),
+        birthdate,
+        gender,
+        picture: pictureUrl, // <- URL devuelta
+        phone_number: normalizePhoneE164(phoneNumber),
+        family_name: familyName.trim(),
+        name: name.trim(),
+        first_name: name.trim(),
+        last_name: familyName.trim(),
+      };
+
+      await signup(payload);
+
+      setMessage({
+        type: "ok",
+        text: "Cuenta creada. Revisa tu correo para confirmar el código.",
       });
 
-      setMessage({ type: "ok", text: "Cuenta creada correctamente." });
-      // Limpia el formulario
-      setNombre("");
-      setApellido("");
-      setCorreo("");
-      setContrasena("");
+      // limpiar
+      setEmail("");
+      setPassword("");
+      setNickname("");
+      setAddress("");
+      setBirthdate("");
+      setGender("");
+      setPhoneNumber("");
+      setFamilyName("");
+      setName("");
+      setPictureFile(null);
 
-      // Redirige (opcional)
-      if (onSuccessRedirect) router.replace(onSuccessRedirect);
+      if (onSuccessRedirect)
+        router.replace(
+          `${onSuccessRedirect}?email=${encodeURIComponent(payload.email)}`
+        );
     } catch (err: any) {
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError)
         setMessage({
           type: "error",
           text: err.message || "Error creando la cuenta.",
         });
-      } else {
+      else
         setMessage({
           type: "error",
-          text: "No se pudo conectar con el servidor.",
+          text: err?.message || "No se pudo conectar con el servidor.",
         });
-      }
     } finally {
       setLoading(false);
     }
   }
-
   return (
     <div className="min-h-screen bg-white flex items-center justify-center p-4">
       <Card className="w-full max-w-md border-0 shadow-none">
@@ -82,79 +154,202 @@ export default function SignupForm({
           <p className="text-sm text-gray-500 font-light">{title}</p>
         </CardHeader>
         <CardContent className="space-y-6">
-          <form className="space-y-6" onSubmit={onSubmit}>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label
-                  htmlFor="nombre"
-                  className="text-sm font-normal text-gray-700"
-                >
-                  Nombre
-                </Label>
-                <Input
-                  id="nombre"
-                  type="text"
-                  placeholder="Ingresa tu nombre"
-                  className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
-                  value={nombre}
-                  onChange={(e) => setNombre(e.target.value)}
-                  required
-                />
-              </div>
+          <form onSubmit={onSubmit} className="space-y-4">
+            {/* Email */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="email"
+                className="text-sm font-normal text-gray-700"
+              >
+                Email
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="Enter your email"
+                required
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
 
-              <div className="space-y-2">
-                <Label
-                  htmlFor="apellido"
-                  className="text-sm font-normal text-gray-700"
-                >
-                  Apellido
-                </Label>
-                <Input
-                  id="apellido"
-                  type="text"
-                  placeholder="Ingresa tu apellido"
-                  className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
-                  value={apellido}
-                  onChange={(e) => setApellido(e.target.value)}
-                  required
-                />
-              </div>
+            {/* Password */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="password"
+                className="text-sm font-normal text-gray-700"
+              >
+                Password
+              </Label>
+              <Input
+                id="password"
+                type="password"
+                placeholder="Create a password"
+                required
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
 
-              <div className="space-y-2">
-                <Label
-                  htmlFor="correo"
-                  className="text-sm font-normal text-gray-700"
-                >
-                  Correo
-                </Label>
-                <Input
-                  id="correo"
-                  type="email"
-                  placeholder="Ingresa tu correo electrónico"
-                  className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
-                  value={correo}
-                  onChange={(e) => setCorreo(e.target.value)}
-                  required
-                />
-              </div>
+            {/* Nickname */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="nickname"
+                className="text-sm font-normal text-gray-700"
+              >
+                Nickname
+              </Label>
+              <Input
+                id="nickname"
+                type="text"
+                placeholder="Choose a nickname"
+                required
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+              />
+            </div>
 
-              <div className="space-y-2">
-                <Label
-                  htmlFor="contrasena"
-                  className="text-sm font-normal text-gray-700"
-                >
-                  Contraseña
-                </Label>
-                <Input
-                  id="contrasena"
-                  type="password"
-                  placeholder="Crea una contraseña"
-                  className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
-                  value={contrasena}
-                  onChange={(e) => setContrasena(e.target.value)}
-                  required
-                />
-              </div>
+            {/* Name (nombre) */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="name"
+                className="text-sm font-normal text-gray-700"
+              >
+                Name
+              </Label>
+              <Input
+                id="name"
+                type="text"
+                placeholder="Enter your first name"
+                required
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+
+            {/* Family Name (apellido) */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="family_name"
+                className="text-sm font-normal text-gray-700"
+              >
+                Family Name
+              </Label>
+              <Input
+                id="family_name"
+                type="text"
+                placeholder="Enter your last name"
+                required
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
+                value={familyName}
+                onChange={(e) => setFamilyName(e.target.value)}
+              />
+            </div>
+
+            {/* Address */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="address"
+                className="text-sm font-normal text-gray-700"
+              >
+                Address
+              </Label>
+              <Input
+                id="address"
+                type="text"
+                placeholder="Enter your address"
+                required
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+              />
+            </div>
+
+            {/* Birthdate */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="birthdate"
+                className="text-sm font-normal text-gray-700"
+              >
+                Birth Date
+              </Label>
+              <Input
+                id="birthdate"
+                type="date"
+                required
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
+                value={birthdate}
+                onChange={(e) => setBirthdate(e.target.value)}
+              />
+            </div>
+
+            {/* Gender */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="gender"
+                className="text-sm font-normal text-gray-700"
+              >
+                Gender
+              </Label>
+              <Select value={gender} onValueChange={setGender} required>
+                <SelectTrigger className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg">
+                  <SelectValue placeholder="Select your gender" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="male">Male</SelectItem>
+                  <SelectItem value="female">Female</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                  <SelectItem value="prefer-not-to-say">
+                    Prefer not to say
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Phone Number */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="phone_number"
+                className="text-sm font-normal text-gray-700"
+              >
+                Phone Number
+              </Label>
+              <Input
+                id="phone_number"
+                type="tel"
+                placeholder="+57 3001234567"
+                required
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg"
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+              />
+              <p className="text-xs text-gray-500">
+                Formato recomendado: E.164 (ej. +573001234567)
+              </p>
+            </div>
+
+            {/* Picture (file) */}
+            <div className="space-y-2">
+              <Label
+                htmlFor="picture"
+                className="text-sm font-normal text-gray-700"
+              >
+                Profile Picture
+              </Label>
+              <Input
+                id="picture"
+                type="file"
+                accept="image/*"
+                className="border-gray-200 focus:border-teal-500 focus:ring-teal-500 h-12 rounded-lg file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100"
+                onChange={(e) => setPictureFile(e.target.files?.[0] ?? null)}
+              />
+              <p className="text-xs text-gray-500">
+                Se subirá y se guardará la URL en tu perfil.
+              </p>
             </div>
 
             <Button
