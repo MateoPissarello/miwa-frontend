@@ -7,30 +7,41 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { adminLogin, login } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
+import { setToken } from "@/lib/api/token";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Mode = "user" | "admin";
 
 interface LoginFormProps {
   mode?: Mode; // "user" (default) | "admin"
   title?: string;
-  onSuccessRedirect?: string; // ej: "/admin"
+  onSuccessRedirect?: string; // ej: "/portal"
+  defaultEmail?: string;
+  justVerified?: boolean; // mostrar banner “correo verificado”
 }
 
 export function LoginForm({
   mode = "user",
   title = "Login",
   onSuccessRedirect,
+  defaultEmail = "",
+  justVerified = false,
 }: LoginFormProps) {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(defaultEmail);
   const [password, setPassword] = useState("");
+  const passwordRef = useRef<HTMLInputElement>(null);
+
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<null | {
     type: "ok" | "error";
     text: string;
   }>(null);
+
+  useEffect(() => {
+    if (defaultEmail) passwordRef.current?.focus();
+  }, [defaultEmail]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,13 +50,45 @@ export function LoginForm({
 
     try {
       if (mode === "admin") {
+        // Tu adminLogin puede seguir igual
         await adminLogin(email, password);
-      } else {
-        await login(email, password);
+        setMessage({ type: "ok", text: "Login exitoso." });
+        if (onSuccessRedirect) router.replace(onSuccessRedirect);
+        return;
       }
 
-      setMessage({ type: "ok", text: "Login exitoso." });
-      if (onSuccessRedirect) router.replace(onSuccessRedirect);
+      // USER: ahora esperamos un objeto {status, session?, tokens?}
+      const res = await login({ email, password });
+
+      if (res.status === "OK") {
+        setToken(res.tokens.access_token);
+        setMessage({ type: "ok", text: "Login exitoso." });
+        if (onSuccessRedirect) router.replace(onSuccessRedirect);
+        return;
+      }
+
+      if (res.status === "MFA_SETUP") {
+        // redirige a la pantalla de setup TOTP
+        router.replace(
+          `/signup/setup-totp?session=${encodeURIComponent(
+            res.session || ""
+          )}&email=${encodeURIComponent(email)}`
+        );
+        return;
+      }
+
+      if (res.status === "SOFTWARE_TOKEN_MFA") {
+        // redirige a la pantalla para introducir el TOTP
+        router.replace(
+          `/login/mfa?session=${encodeURIComponent(
+            res.session || ""
+          )}&email=${encodeURIComponent(email)}`
+        );
+        return;
+      }
+
+      // fallback si viene algo inesperado
+      setMessage({ type: "error", text: "No se pudo iniciar sesión." });
     } catch (err: any) {
       if (err instanceof ApiError) {
         setMessage({
@@ -74,6 +117,13 @@ export function LoginForm({
         </CardHeader>
 
         <CardContent className="space-y-6">
+          {/* Banner opcional si viene de verify-email */}
+          {justVerified && (
+            <div className="text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-2 rounded">
+              Correo verificado. Ahora inicia sesión.
+            </div>
+          )}
+
           <form className="space-y-6" onSubmit={onSubmit}>
             <div className="space-y-4">
               <div className="space-y-2">
@@ -102,6 +152,7 @@ export function LoginForm({
                   Password
                 </Label>
                 <Input
+                  ref={passwordRef}
                   id="password"
                   type="password"
                   placeholder="Enter your password"

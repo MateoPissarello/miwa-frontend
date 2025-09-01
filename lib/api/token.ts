@@ -15,3 +15,8 @@ export function clearToken() {
   if (typeof window === "undefined") return;
   localStorage.removeItem(KEY);
 }
+
+export function setRefreshToken(token: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem("refresh_token", token);
+}

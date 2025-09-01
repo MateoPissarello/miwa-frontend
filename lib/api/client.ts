@@ -1,14 +1,24 @@
 // lib/api/client.ts
-import { getToken, clearToken } from "./token";
+import { clearToken, getToken } from "./token";
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export class ApiError extends Error { status: number; constructor(s: number, m: string){ super(m); this.status=s; } }
+export class ApiError extends Error {
+  status: number;
+  constructor(s: number, m: string) {
+    super(m);
+    this.status = s;
+  }
+}
 
 type Options = RequestInit & { skipAuth?: boolean; redirectOn401?: boolean };
 
-export async function apiFetch<T = unknown>(endpoint: string, options: Options = {}): Promise<T> {
+export async function apiFetch<T = unknown>(
+  endpoint: string,
+  options: Options = {}
+): Promise<T> {
   const token = options.skipAuth ? null : getToken();
-  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
 
   const res = await fetch(`${API_URL}${endpoint}`, {
     ...options,
@@ -22,13 +32,21 @@ export async function apiFetch<T = unknown>(endpoint: string, options: Options =
 
   const text = await res.text();
   let data: any = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text || null; }
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text || null;
+  }
 
   if (!res.ok) {
-    const msg = typeof data?.detail === "string" ? data.detail : data?.message ?? `Error ${res.status}`;
+    const msg =
+      typeof data?.detail === "string"
+        ? data.detail
+        : data?.message ?? `Error ${res.status}`;
     if (res.status === 401 && options.redirectOn401 !== false) {
       clearToken();
-      if (typeof window !== "undefined") window.location.replace("/admin-login");
+      if (typeof window !== "undefined")
+        window.location.replace("/admin-login");
     }
     throw new ApiError(res.status, msg);
   }
