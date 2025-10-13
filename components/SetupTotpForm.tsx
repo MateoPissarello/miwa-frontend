@@ -6,9 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { mfaSetupBegin, mfaSetupVerify } from "@/lib/api/auth";
 import { ApiError } from "@/lib/api/client";
+import { setToken } from "@/lib/api/token";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { setToken } from "@/lib/api/token";   
 
 interface Props {
   session: string;
@@ -75,7 +75,7 @@ export default function SetupTotpForm({
     try {
       const res = await mfaSetupVerify({ session: info.session, email, code });
       if (res.status === "OK") {
-        setToken(res.tokens.access_token);
+        setToken(res.tokens.AccessToken);
         router.replace(onSuccessRedirect);
       } else {
         setErr("No se pudo completar el setup de MFA.");

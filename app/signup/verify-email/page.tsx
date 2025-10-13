@@ -1,11 +1,16 @@
 // app/signup/verify-email/page.tsx
 import VerifyEmailForm from "@/components/VerifyEmailForm";
 
-export default function Page({
+type SP = {
+  email?: string | string[];
+};
+
+export default async function Page({
   searchParams,
 }: {
-  searchParams: { email?: string };
+  searchParams: Promise<SP>;
 }) {
-  const email = searchParams?.email ?? "";
+  const sp = await searchParams;
+  const email = Array.isArray(sp.email) ? sp.email[0] ?? "" : sp.email ?? "";
   return <VerifyEmailForm email={email} onSuccessRedirect="/login" />;
 }

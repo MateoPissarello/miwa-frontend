@@ -61,7 +61,7 @@ export function LoginForm({
       const res = await login({ email, password });
 
       if (res.status === "OK") {
-        setToken(res.tokens.access_token);
+        setToken(res.tokens.AccessToken);
         setMessage({ type: "ok", text: "Login exitoso." });
         if (onSuccessRedirect) router.replace(onSuccessRedirect);
         return;
