@@ -1,13 +1,14 @@
 // app/login/page.tsx
 import { LoginForm } from "@/components/LoginForm";
 
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: { email?: string; verified?: string };
-}) {
-  const defaultEmail = await searchParams?.email ?? "";
-  const justVerified = await searchParams?.verified === "1";
+type LoginPageProps = {
+  searchParams: Promise<{ email?: string; verified?: string } | undefined>;
+};
+
+export default async function Page({ searchParams }: LoginPageProps) {
+  const params = await searchParams;
+  const defaultEmail = params?.email ?? "";
+  const justVerified = params?.verified === "1";
 
   return (
     <LoginForm
