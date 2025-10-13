@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
 # Builder stage: install dependencies and build the Next.js application
-FROM node:20-bullseye-slim AS builder
+FROM public.ecr.aws/docker/library/node:20-bullseye-slim AS builder
+
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1
@@ -17,7 +18,7 @@ COPY . .
 RUN npm run build
 
 # Runner stage: create a lean image for production
-FROM node:20-bullseye-slim AS runner
+FROM public.ecr.aws/docker/library/node:20-bullseye-slim AS runner
 
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
