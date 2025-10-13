@@ -1,6 +1,11 @@
 // lib/api/client.ts
 import { clearToken, getToken } from "./token";
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+
+// En el bundle del cliente, si no viene definida en build, usamos '/api'
+const RAW = process.env.NEXT_PUBLIC_API_URL ?? "/api";
+
+// normaliza para evitar dobles barras
+const API_URL = RAW.endsWith("/") ? RAW.slice(0, -1) : RAW;
 
 export class ApiError extends Error {
   status: number;
@@ -20,10 +25,11 @@ export async function apiFetch<T = unknown>(
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
 
-  const res = await fetch(`${API_URL}${endpoint}`, {
+  const path = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+
+  const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
-      // ❗️no pongas Content-Type si envías FormData
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
