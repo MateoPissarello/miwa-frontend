@@ -13,115 +13,175 @@ import {
 } from "@/components/ui/sheet";
 import { ApiError } from "@/lib/api/client";
 import {
-  deleteRecording,
-  getDownloadUrl,
-  listRecordings,
-  S3Item,
-  uploadRecording,
-} from "@/lib/api/s3";
-import {
-  ArrowLeft,
-  Download,
-  Menu,
-  Trash2,
-  Upload,
-  User,
-  Video,
-} from "lucide-react";
+  createMeetingUploadUrl,
+  listMeetings,
+  MeetingArtifact,
+  MeetingRecord,
+} from "@/lib/api/meetings";
+import { getCurrentUserEmail } from "@/lib/auth/user";
+import { ArrowLeft, Download, Menu, Upload, User, Video } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+type ArtifactRow = {
+  meeting: MeetingRecord;
+  artifact: MeetingArtifact;
+};
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString();
+}
+
+function extractSignedUrl(artifact: MeetingArtifact): string | undefined {
+  const candidateKeys = ["signed_url", "url", "download_url", "get_url", "read_url"];
+  for (const key of candidateKeys) {
+    const candidate = (artifact as Record<string, unknown>)[key];
+    if (typeof candidate === "string" && candidate) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function inferArtifactStatus(artifact: MeetingArtifact, meeting: MeetingRecord) {
+  return artifact.status || meeting.status || "-";
+}
+
+function inferArtifactLabel(artifact: MeetingArtifact) {
+  return artifact.basename || artifact.s3_key || "Grabación";
+}
 
 export default function RecordingsPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [items, setItems] = useState<S3Item[]>([]);
+  const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState<null | { type: "ok" | "error"; text: string }>(
-    null
+    null,
   );
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [meetingName, setMeetingName] = useState("");
+  const [meetingDate, setMeetingDate] = useState(
+    () => new Date().toISOString().slice(0, 10),
+  );
   const [uploading, setUploading] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
-  async function refresh() {
+  useEffect(() => {
+    setUserEmail(getCurrentUserEmail());
+  }, []);
+
+  useEffect(() => {
+    if (!userEmail) return;
+    refresh(userEmail);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userEmail]);
+
+  const artifactRows = useMemo<ArtifactRow[]>(() => {
+    const rows: ArtifactRow[] = [];
+    meetings.forEach((meeting) => {
+      (meeting.artifacts || []).forEach((artifact) => {
+        rows.push({ meeting, artifact });
+      });
+    });
+    return rows;
+  }, [meetings]);
+
+  async function refresh(email: string) {
     try {
       setLoading(true);
-      // si quieres filtrar por usuario: const prefix = `uploads/${email}/`
-
-      const data = await listRecordings();
-      console.log(data);
-      setItems(data);
       setMsg(null);
+      const data = await listMeetings({ user_email: email });
+      setMeetings(data);
     } catch (e: any) {
       setMsg({
         type: "error",
-        text: e instanceof ApiError ? e.message : "Error listando archivos",
+        text: e instanceof ApiError ? e.message : "Error listando reuniones",
       });
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    refresh();
-  }, []);
-
   function handlePick(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0] || null;
     setSelectedFile(f);
   }
+
   async function handleUpload() {
     if (!selectedFile) return;
+    if (!meetingName.trim()) {
+      setMsg({ type: "error", text: "Indica el nombre de la reunión." });
+      return;
+    }
+    if (!meetingDate) {
+      setMsg({ type: "error", text: "Indica la fecha de la reunión." });
+      return;
+    }
+
     try {
       setUploading(true);
-      await uploadRecording(selectedFile); // usa FormData con clave "file"
-      setMsg({ type: "ok", text: "Archivo subido correctamente." });
-      setSelectedFile(null);
-      await refresh(); // recarga la lista
-    } catch (e: any) {
-      setMsg({
-        type: "error",
-        text: e instanceof ApiError ? e.message : "Error subiendo archivo",
+      setMsg(null);
+      const uploadResp = await createMeetingUploadUrl({
+        meeting_name: meetingName.trim(),
+        meeting_date: meetingDate,
+        filename: selectedFile.name,
+        content_type: selectedFile.type || "application/octet-stream",
       });
+
+      const signedUrl =
+        uploadResp.upload_url || uploadResp.signed_url || uploadResp.url;
+
+      if (!signedUrl) {
+        throw new Error("El backend no devolvió la URL firmada de carga.");
+      }
+
+      const putRes = await fetch(signedUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": selectedFile.type || "application/octet-stream",
+        },
+        body: selectedFile,
+      });
+
+      if (!putRes.ok) {
+        const body = await putRes.text().catch(() => "");
+        throw new Error(body || "Falló la subida a S3 (PUT presignado).");
+      }
+
+      setMsg({
+        type: "ok",
+        text: "Grabación enviada. El procesamiento puede tardar unos minutos.",
+      });
+      setSelectedFile(null);
+      setMeetingName("");
+      if (userEmail) await refresh(userEmail);
+    } catch (e: any) {
+      const text =
+        e instanceof ApiError
+          ? e.message
+          : e?.message || "Error subiendo la grabación";
+      setMsg({ type: "error", text });
     } finally {
       setUploading(false);
     }
   }
 
-  const onDownload = async (key: string) => {
-    try {
-      const url = await getDownloadUrl(key);
-      window.open(url, "_blank");
-    } catch (e: any) {
+  const onDownload = (artifact: MeetingArtifact) => {
+    const signedUrl = extractSignedUrl(artifact);
+    if (!signedUrl) {
       setMsg({
         type: "error",
-        text:
-          e instanceof ApiError
-            ? e.message
-            : "Error generando link de descarga",
+        text: "No hay un enlace de descarga disponible para este artefacto.",
       });
+      return;
     }
-  };
-
-  const onDelete = async (key: string) => {
-    if (!confirm("¿Eliminar este archivo definitivamente?")) return;
-    try {
-      const ok = await deleteRecording(key);
-      if (ok) {
-        setItems((prev) => prev.filter((i) => i.key !== key));
-        setMsg({ type: "ok", text: "Archivo eliminado." });
-      } else {
-        setMsg({ type: "error", text: "No se pudo eliminar el archivo." });
-      }
-    } catch (e: any) {
-      setMsg({
-        type: "error",
-        text: e instanceof ApiError ? e.message : "Error eliminando archivo",
-      });
-    }
+    window.open(signedUrl, "_blank", "noopener,noreferrer");
   };
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Top Bar */}
       <header className="border-b border-gray-200 bg-white px-4 py-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
@@ -140,15 +200,12 @@ export default function RecordingsPage() {
                 className="w-64 p-0"
                 aria-label="Sidebar navigation"
               >
-                {/* Título accesible (oculto si quieres) */}
                 <SheetHeader className="sr-only">
                   <SheetTitle>Sidebar</SheetTitle>
                 </SheetHeader>
                 <div className="flex h-full flex-col bg-white">
                   <div className="border-b border-gray-200 p-4">
-                    <h2 className="text-lg font-semibold text-gray-900">
-                      MIWA
-                    </h2>
+                    <h2 className="text-lg font-semibold text-gray-900">MIWA</h2>
                   </div>
                   <nav className="flex-1 p-4">
                     <div className="space-y-2">
@@ -184,7 +241,6 @@ export default function RecordingsPage() {
         </div>
       </header>
 
-      {/* Mensajes */}
       {msg && (
         <div
           className={`mx-6 mt-4 rounded border px-4 py-2 text-sm ${
@@ -197,7 +253,6 @@ export default function RecordingsPage() {
         </div>
       )}
 
-      {/* Main */}
       <main className="p-6">
         <div className="max-w-7xl mx-auto">
           <div className="mb-8">
@@ -205,19 +260,44 @@ export default function RecordingsPage() {
               Meeting Recordings
             </h2>
             <p className="text-gray-600">
-              Upload, manage and download your meeting recordings
+              Sube tus grabaciones y consulta su estado de procesamiento.
             </p>
           </div>
 
           <Card className="mb-8">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Upload className="h-5 w-5 text-teal-600" />
-                Upload New Recording
+              <CardTitle className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <span className="flex items-center gap-2">
+                  <Upload className="h-5 w-5 text-teal-600" />
+                  Upload New Recording
+                </span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-4 w-full">
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">
+                    Nombre de la reunión
+                  </label>
+                  <Input
+                    value={meetingName}
+                    onChange={(event) => setMeetingName(event.target.value)}
+                    placeholder="Ej. Weekly sync"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">
+                    Fecha
+                  </label>
+                  <Input
+                    type="date"
+                    value={meetingDate}
+                    onChange={(event) => setMeetingDate(event.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
                 <Input
                   type="file"
                   accept="audio/*,video/*"
@@ -237,7 +317,7 @@ export default function RecordingsPage() {
                 </Button>
               </div>
               {selectedFile && (
-                <p className="mt-2 text-xs text-gray-500 break-all">
+                <p className="mt-1 text-xs text-gray-500 break-all">
                   Seleccionado: {selectedFile.name} •{" "}
                   {(selectedFile.size / (1024 * 1024)).toFixed(1)} MB
                 </p>
@@ -245,10 +325,13 @@ export default function RecordingsPage() {
             </CardContent>
           </Card>
 
-          {/* Listado */}
-          {loading ? (
+          {!userEmail ? (
+            <div className="text-sm text-red-600">
+              No se pudo obtener el email del usuario autenticado.
+            </div>
+          ) : loading ? (
             <div className="text-sm text-gray-500">Cargando…</div>
-          ) : items.length === 0 ? (
+          ) : artifactRows.length === 0 ? (
             <div className="bg-gray-50 rounded-lg p-8 text-center">
               <div className="max-w-md mx-auto">
                 <Video className="h-12 w-12 text-teal-600 mx-auto mb-4" />
@@ -256,55 +339,62 @@ export default function RecordingsPage() {
                   No recordings yet
                 </h3>
                 <p className="text-gray-600 mb-4">
-                  Upload your first recording using the button above
+                  Upload your first recording using the form above.
                 </p>
               </div>
             </div>
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle>Your Recordings ({items.length})</CardTitle>
+                <CardTitle>Tu historial de grabaciones ({artifactRows.length})</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {items.map((it) => (
-                    <div
-                      key={it.key}
-                      className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-                    >
-                      <div className="flex items-center gap-4">
-                        <Video className="h-8 w-8 text-teal-600" />
-                        <div>
+                  {artifactRows.map(({ meeting, artifact }, index) => {
+                    const rowKey =
+                      [
+                        meeting.user_email,
+                        meeting.meeting_name,
+                        meeting.meeting_date,
+                        artifact.basename || artifact.s3_key || index,
+                      ]
+                        .filter(Boolean)
+                        .join("::") || `${index}`;
+                    return (
+                      <div
+                        key={rowKey}
+                        className="flex flex-col gap-4 rounded-lg border border-gray-200 p-4 transition-colors hover:bg-gray-50 md:flex-row md:items-center md:justify-between"
+                      >
+                        <div className="space-y-1">
                           <h4 className="font-medium text-gray-900 break-all">
-                            {it.name}
+                            {meeting.meeting_name || inferArtifactLabel(artifact)}
                           </h4>
+                          <p className="text-xs text-gray-500">
+                            {meeting.meeting_date
+                              ? formatDate(meeting.meeting_date)
+                              : ""}
+                          </p>
                           <p className="text-xs text-gray-500 break-all">
-                            {it.key}
+                            Archivo: {inferArtifactLabel(artifact)}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            Estado: {inferArtifactStatus(artifact, meeting)}
                           </p>
                         </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => onDownload(artifact)}
+                            className="hover:bg-teal-50 hover:text-teal-700"
+                            title="Download"
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => onDownload(it.key)}
-                          className="hover:bg-teal-50 hover:text-teal-700"
-                          title="Download"
-                        >
-                          <Download className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => onDelete(it.key)}
-                          className="hover:bg-red-50 hover:text-red-600"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
