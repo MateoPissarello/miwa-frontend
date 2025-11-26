@@ -40,7 +40,9 @@ export async function listRecordingsWithStatus(): Promise<RecordingWithStatus[]>
 export async function startTranscription(
   recordingId: string
 ): Promise<StatusResponse> {
-  return apiFetch<StatusResponse>(`/transcriptions/${recordingId}/start`, {
+  const encodedId = encodeURIComponent(recordingId);
+
+  return apiFetch<StatusResponse>(`/transcriptions/${encodedId}/start`, {
     method: "POST",
   });
 }
@@ -48,7 +50,9 @@ export async function startTranscription(
 export async function getTranscriptionStatus(
   recordingId: string
 ): Promise<StatusResponse> {
-  return apiFetch<StatusResponse>(`/transcriptions/${recordingId}/status`, {
+  const encodedId = encodeURIComponent(recordingId);
+
+  return apiFetch<StatusResponse>(`/transcriptions/${encodedId}/status`, {
     method: "GET",
   });
 }
@@ -56,5 +60,7 @@ export async function getTranscriptionStatus(
 export async function downloadTranscriptionText(
   recordingId: string
 ): Promise<string> {
-  return apiFetch<string>(`/transcriptions/${recordingId}`, { method: "GET" });
+  const encodedId = encodeURIComponent(recordingId);
+
+  return apiFetch<string>(`/transcriptions/${encodedId}`, { method: "GET" });
 }
