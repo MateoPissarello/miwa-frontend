@@ -23,8 +23,18 @@ export interface StatusResponse {
   updated_at?: string | null;
 }
 
+type RecordingsResponse =
+  | RecordingWithStatus[]
+  | { recordings?: RecordingWithStatus[]; items?: RecordingWithStatus[] };
+
 export async function listRecordingsWithStatus(): Promise<RecordingWithStatus[]> {
-  return apiFetch<RecordingWithStatus[]>("/recordings");
+  const data = await apiFetch<RecordingsResponse>("/recordings");
+
+  if (Array.isArray(data)) return data;
+  if (data?.recordings && Array.isArray(data.recordings)) return data.recordings;
+  if (data?.items && Array.isArray(data.items)) return data.items;
+
+  return [];
 }
 
 export async function startTranscription(
